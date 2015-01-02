@@ -102,6 +102,7 @@ use self::LengthLimit::*;
 
 use std::fmt;
 use std::result;
+use std::slice;
 use std::string::String;
 
 /// Name of an option. Either a string or a single char.
@@ -564,12 +565,20 @@ impl fmt::Show for Fail {
 /// Returns `Err(Fail)` on failure: use the `Show` implementation of `Fail` to display
 /// information about it.
 pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
-    let opts: Vec<Opt> = optgrps.iter().map(|x| x.long_to_short()).collect();
-    let n_opts = opts.len();
+    #[deriving(Clone)]
+    struct OptIterator<'a> {
+        inner: slice::Iter<'a, (Opt, Vec<Optval>)>,
+    }
+    impl<'a> Iterator<&'a Opt> for OptIterator<'a> {
+        fn next(&mut self) -> Option<&'a Opt> {
+            self.inner.next().map(|&(ref o, _)| o)
+        }
+    }
 
-    fn f(_x: uint) -> Vec<Optval> { return Vec::new(); }
+    let mut opts: Vec<(Opt, Vec<Optval>)> = optgrps.iter().map(|x| {
+        (x.long_to_short(), vec![])
+    }).collect();
 
-    let mut vals = Vec::from_fn(n_opts, f);
     let mut free: Vec<String> = Vec::new();
     let l = args.len();
     let mut i = 0;
@@ -609,14 +618,14 @@ pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
                        interpreted correctly
                     */
 
-                    let opt_id = match find_opt(opts.iter(), opt.clone()) {
+                    let opt_id = match find_opt(OptIterator { inner: opts.iter() }, opt.clone()) {
                       Some(id) => id,
                       None => return Err(UnrecognizedOption(opt.to_string()))
                     };
 
                     names.push(opt);
 
-                    let arg_follows = match opts[opt_id].hasarg {
+                    let arg_follows = match opts[opt_id].0.hasarg {
                         Yes | Maybe => true,
                         No => false
                     };
@@ -632,38 +641,38 @@ pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
             let mut name_pos = 0;
             for nm in names.iter() {
                 name_pos += 1;
-                let optid = match find_opt(opts.iter(), (*nm).clone()) {
+                let optid = match find_opt(OptIterator { inner: opts.iter() }, (*nm).clone()) {
                   Some(id) => id,
                   None => return Err(UnrecognizedOption(nm.to_string()))
                 };
-                match opts[optid].hasarg {
+                match opts[optid].0.hasarg {
                   No => {
                     if name_pos == names.len() && !i_arg.is_none() {
                         return Err(UnexpectedArgument(nm.to_string()));
                     }
-                    vals[optid].push(Given);
+                    opts[optid].1.push(Given);
                   }
                   Maybe => {
                     if !i_arg.is_none() {
-                        vals[optid]
+                        opts[optid].1
                             .push(Val((i_arg.clone())
                             .unwrap()));
                     } else if name_pos < names.len() || i + 1 == l ||
                             is_arg(args[i + 1].as_slice()) {
-                        vals[optid].push(Given);
+                        opts[optid].1.push(Given);
                     } else {
                         i += 1;
-                        vals[optid].push(Val(args[i].clone()));
+                        opts[optid].1.push(Val(args[i].clone()));
                     }
                   }
                   Yes => {
                     if !i_arg.is_none() {
-                        vals[optid].push(Val(i_arg.clone().unwrap()));
+                        opts[optid].1.push(Val(i_arg.clone().unwrap()));
                     } else if i + 1 == l {
                         return Err(ArgumentMissing(nm.to_string()));
                     } else {
                         i += 1;
-                        vals[optid].push(Val(args[i].clone()));
+                        opts[optid].1.push(Val(args[i].clone()));
                     }
                   }
                 }
@@ -671,16 +680,17 @@ pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
         }
         i += 1;
     }
-    for i in range(0u, n_opts) {
-        let n = vals[i].len();
-        let occ = opts[i].occur;
+    for &(ref opt, ref vals) in opts.iter() {
+        let n = vals.len();
+        let occ = opt.occur;
         if occ == Req && n == 0 {
-            return Err(OptionMissing(opts[i].name.to_string()));
+            return Err(OptionMissing(opt.name.to_string()));
         }
         if occ != Multi && n > 1 {
-            return Err(OptionDuplicated(opts[i].name.to_string()));
+            return Err(OptionDuplicated(opt.name.to_string()));
         }
     }
+    let (opts, vals) = opts.into_iter().unzip();
     Ok(Matches {
         opts: opts,
         vals: vals,
