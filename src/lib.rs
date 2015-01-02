@@ -287,7 +287,7 @@ impl OptGroup {
 
 impl Matches {
     fn opt_vals(&self, nm: &str) -> Vec<Optval> {
-        match find_opt(self.opts.as_slice(), Name::from_str(nm)) {
+        match find_opt(self.opts.iter(), Name::from_str(nm)) {
             Some(id) => self.vals[id].clone(),
             None => panic!("No option '{}' defined", nm)
         }
@@ -310,7 +310,7 @@ impl Matches {
     /// Returns true if any of several options were matched.
     pub fn opts_present(&self, names: &[String]) -> bool {
         names.iter().any(|nm| {
-            match find_opt(self.opts.as_slice(),
+            match find_opt(self.opts.iter(),
                            Name::from_str(nm.as_slice())) {
                 Some(id) if !self.vals[id].is_empty() => true,
                 _ => false,
@@ -369,17 +369,19 @@ fn is_arg(arg: &str) -> bool {
     arg.as_bytes().get(0) == Some(&b'-')
 }
 
-fn find_opt(opts: &[Opt], nm: Name) -> Option<uint> {
+fn find_opt<'a, I>(mut opts: I, nm: Name) -> Option<uint>
+    where I: Iterator<&'a Opt> + Clone
+{
     // Search main options.
-    let pos = opts.iter().position(|opt| opt.name == nm);
+    let pos = opts.clone().position(|opt| opt.name == nm);
     if pos.is_some() {
         return pos
     }
 
     // Search in aliases.
-    for candidate in opts.iter() {
+    for candidate in opts.clone() {
         if candidate.aliases.iter().position(|opt| opt.name == nm).is_some() {
-            return opts.iter().position(|opt| opt.name == candidate.name);
+            return opts.position(|opt| opt.name == candidate.name);
         }
     }
 
@@ -607,7 +609,7 @@ pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
                        interpreted correctly
                     */
 
-                    let opt_id = match find_opt(opts.as_slice(), opt.clone()) {
+                    let opt_id = match find_opt(opts.iter(), opt.clone()) {
                       Some(id) => id,
                       None => return Err(UnrecognizedOption(opt.to_string()))
                     };
@@ -630,7 +632,7 @@ pub fn getopts(args: &[String], optgrps: &[OptGroup]) -> Result {
             let mut name_pos = 0;
             for nm in names.iter() {
                 name_pos += 1;
-                let optid = match find_opt(opts.as_slice(), (*nm).clone()) {
+                let optid = match find_opt(opts.iter(), (*nm).clone()) {
                   Some(id) => id,
                   None => return Err(UnrecognizedOption(nm.to_string()))
                 };
